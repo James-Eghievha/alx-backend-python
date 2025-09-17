@@ -80,3 +80,8 @@ class TestAccessNestedMap(unittest.TestCase):
 if __name__ == '__main__':
     # This runs our tests when we execute the file directly
     unittest.main()
+
+
+if __name__ == '__main__':
+    # This runs our tests when we execute the file directly
+    unittest.main()
