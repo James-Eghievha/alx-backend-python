@@ -7,8 +7,9 @@ in all situations before we trust it with real treasure hunts.
 """
 
 import unittest
+from unittest.mock import patch
 from parameterized import parameterized
-from utils import access_nested_map
+from utils import access_nested_map, get_json
 
 
 class TestAccessNestedMap(unittest.TestCase):
@@ -75,6 +76,52 @@ class TestAccessNestedMap(unittest.TestCase):
         with self.assertRaises(KeyError) as context:
             access_nested_map(nested_map, path)
         self.assertEqual(str(context.exception), f"'{expected_key}'")
+
+
+class TestGetJson(unittest.TestCase):
+    """Test the get_json function.
+    
+    This class tests our HTTP client function while avoiding actual
+    network requests by using mocks - like testing a car engine
+    on a test bench instead of on real roads.
+    """
+    
+    @parameterized.expand([
+        # Test case 1: Example.com with True payload
+        ("http://example.com", {"payload": True}),
+        
+        # Test case 2: Holberton.io with False payload  
+        ("http://holberton.io", {"payload": False}),
+    ])
+    @patch('utils.requests.get')
+    def test_get_json(self, test_url, test_payload, mock_get):
+        """Test that get_json returns expected result without making real HTTP calls.
+        
+        This test uses mocking to replace the real requests.get with a fake version
+        that returns exactly what we want, allowing us to test our function's logic
+        without depending on external services.
+        
+        Parameters:
+        -----------
+        test_url: str
+            The URL that will be passed to get_json
+        test_payload: dict
+            The JSON data we expect to receive back
+        mock_get: Mock
+            The mocked requests.get function (injected by @patch)
+        """
+        # Configure the mock to return our test data
+        # This sets up: mock_get().json() returns test_payload
+        mock_get.return_value.json.return_value = test_payload
+        
+        # Call the function we're testing
+        result = get_json(test_url)
+        
+        # Verify the mock was called exactly once with the correct URL
+        mock_get.assert_called_once_with(test_url)
+        
+        # Verify the function returns the expected result
+        self.assertEqual(result, test_payload)
 
 
 if __name__ == '__main__':
