@@ -7,9 +7,9 @@ in all situations before we trust it with real treasure hunts.
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from parameterized import parameterized
-from utils import access_nested_map, get_json
+from utils import access_nested_map, get_json, memoize
 
 
 class TestAccessNestedMap(unittest.TestCase):
@@ -122,6 +122,54 @@ class TestGetJson(unittest.TestCase):
         
         # Verify the function returns the expected result
         self.assertEqual(result, test_payload)
+
+
+class TestMemoize(unittest.TestCase):
+    """Test the memoize decorator.
+    
+    This class tests our caching decorator to ensure it properly caches
+    method results and avoids redundant computations - like testing
+    that a smart cache remembers answers correctly.
+    """
+    
+    def test_memoize(self):
+        """Test that memoize decorator caches method results correctly.
+        
+        This test verifies that:
+        1. The memoized property returns the correct value
+        2. The underlying method is called only once (caching works)
+        3. Multiple accesses to the property return the same cached result
+        """
+        
+        class TestClass:
+            """A test class to demonstrate memoization behavior."""
+            
+            def a_method(self):
+                """A method that returns a value - we'll mock this."""
+                return 42
+            
+            @memoize 
+            def a_property(self):
+                """A memoized property that calls a_method."""
+                return self.a_method()
+        
+        # Create an instance of our test class
+        test_obj = TestClass()
+        
+        # Mock the underlying method to track how many times it's called
+        with patch.object(test_obj, 'a_method', return_value=42) as mock_method:
+            # First access to the memoized property
+            result1 = test_obj.a_property
+            
+            # Second access to the memoized property  
+            result2 = test_obj.a_property
+            
+            # Verify both accesses return the correct result
+            self.assertEqual(result1, 42)
+            self.assertEqual(result2, 42)
+            
+            # Verify the underlying method was called only once (memoization working)
+            mock_method.assert_called_once()
 
 
 if __name__ == '__main__':
