@@ -1,4 +1,41 @@
-#!/usr/bin/env python3
+# Verify the result matches expected boolean value
+        self.assertEqual(result, expected)
+
+
+@parameterized_class(
+    ("org_payload", "repos_payload", "expected_repos", "apache2_repos"),
+    [TEST_PAYLOAD]
+)
+class TestIntegrationGithubOrgClient(unittest.TestCase):
+    """Integration tests for GithubOrgClient.
+    
+    This class tests the GithubOrgClient with real interactions between
+    its internal methods, while only mocking external HTTP requests.
+    
+    Integration testing verifies that all the pieces work together:
+    - org property gets organization data
+    - _public_repos_url extracts repos URL from org data
+    - repos_payload fetches repository list using the URL
+    - public_repos processes the repository data correctly
+    
+    Only external requests (requests.get) are mocked using fixtures.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        """Set up class-level mocks for integration testing.
+        
+        This method runs once before all test methods in the class.
+        It sets up a persistent mock for requests.get that will return
+        different fixture data based on the URL being requested.
+        
+        Using side_effect allows the mock to return different responses
+        for different URLs, simulating real API behavior:
+        - Organization URL returns organization data
+        - Repository URL returns repository list
+        """
+        # Start the patcher for requests.get
+        cls.get_patcher#!/usr/bin/env python3
 """Unit tests for client module.
 
 This module tests the GithubOrgClient class to ensure it properly
@@ -8,9 +45,10 @@ while avoiding actual network requests.
 """
 
 import unittest
-from unittest.mock import patch
-from parameterized import parameterized
+from unittest.mock import patch, Mock
+from parameterized import parameterized, parameterized_class
 from client import GithubOrgClient
+from fixtures import TEST_PAYLOAD
 
 
 class TestGithubOrgClient(unittest.TestCase):
