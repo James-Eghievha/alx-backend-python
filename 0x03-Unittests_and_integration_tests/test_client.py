@@ -143,6 +143,38 @@ class TestGithubOrgClient(unittest.TestCase):
         # Verify get_json was called once with the mocked URL
         mock_get_json.assert_called_once_with(test_repos_url)
 
+    @parameterized.expand([
+        # Test case 1: License key matches - should return True
+        ({"license": {"key": "my_license"}}, "my_license", True),
+        
+        # Test case 2: License key doesn't match - should return False
+        ({"license": {"key": "other_license"}}, "my_license", False),
+    ])
+    def test_has_license(self, repo, license_key, expected):
+        """Test that has_license correctly identifies repository license status.
+        
+        This test verifies the static method's ability to:
+        1. Access nested license information from repository data
+        2. Compare license keys correctly
+        3. Return appropriate boolean values for match/no-match scenarios
+        
+        No mocking required since this tests pure logic without external dependencies.
+        
+        Parameters:
+        -----------
+        repo: Dict
+            Repository data structure containing license information
+        license_key: str  
+            The license key to check for
+        expected: bool
+            Expected return value (True for match, False for no match)
+        """
+        # Call the static method directly on the class
+        result = GithubOrgClient.has_license(repo, license_key)
+        
+        # Verify the result matches expected boolean value
+        self.assertEqual(result, expected)
+
 
 if __name__ == '__main__':
     # This runs our tests when we execute the file directly
