@@ -1,71 +1,180 @@
 #!/usr/bin/env python3
-"""Unit tests for client module.
+"""Unit tests for utils module.
 
-This module tests the GithubOrgClient class to ensure it properly
-interacts with the GitHub API through our utility functions.
-We focus on testing the integration between the client and its dependencies
-while avoiding actual network requests.
+This is like being a quality inspector for our treasure hunting tools!
+We need to make sure our access_nested_map function works perfectly
+in all situations before we trust it with real treasure hunts.
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from parameterized import parameterized
-from client import GithubOrgClient
+from utils import access_nested_map, get_json, memoize
 
 
-class TestGithubOrgClient(unittest.TestCase):
-    """Test the GithubOrgClient class.
+class TestAccessNestedMap(unittest.TestCase):
+    """Test the access_nested_map function.
     
-    This class tests our GitHub API client to ensure it correctly
-    constructs API requests and processes responses without making
-    actual HTTP calls to GitHub.
+    Think of this class as our "Testing Laboratory" where we verify
+    our treasure hunting tool works correctly!
     """
     
     @parameterized.expand([
-        # Test case 1: Google organization
-        ("google",),
+        # Test case 1: Simple treasure chest (one level deep)
+        # Like opening a single chest to find gold
+        ({"a": 1}, ("a",), 1),
         
-        # Test case 2: ABC organization  
-        ("abc",),
+        # Test case 2: Chest within chest, but only opening outer chest  
+        # Like opening the first chest and finding another chest inside
+        ({"a": {"b": 2}}, ("a",), {"b": 2}),
+        
+        # Test case 3: Deep treasure hunting (two levels deep)
+        # Like opening first chest, then second chest, and finding treasure
+        ({"a": {"b": 2}}, ("a", "b"), 2),
     ])
-    @patch('client.get_json')
-    def test_org(self, org_name, mock_get_json):
-        """Test that GithubOrgClient.org returns correct value and calls get_json properly.
-        
-        This test verifies that:
-        1. The org property returns the data from get_json
-        2. get_json is called exactly once with the correct GitHub API URL
-        3. The URL is properly constructed using the organization name
-        4. No actual HTTP requests are made (mocking ensures this)
+    def test_access_nested_map(self, nested_map, path, expected):
+        """Test that access_nested_map returns correct treasure for given path.
         
         Parameters:
         -----------
-        org_name: str
-            The GitHub organization name to test with
-        mock_get_json: Mock
-            The mocked get_json function (injected by @patch)
+        nested_map: dict
+            Our treasure map (the nested dictionary)
+        path: tuple  
+            The path to follow (sequence of keys)
+        expected: any
+            What treasure we expect to find
         """
-        # Configure the mock to return test organization data
-        test_org_data = {
-            "login": org_name,
-            "id": 12345,
-            "url": f"https://api.github.com/orgs/{org_name}",
-            "repos_url": f"https://api.github.com/orgs/{org_name}/repos"
-        }
-        mock_get_json.return_value = test_org_data
+        # This is our actual test - only 2 lines as required!
+        result = access_nested_map(nested_map, path)
+        self.assertEqual(result, expected)
+    
+    @parameterized.expand([
+        # Test case 1: Empty treasure room - looking for chest "a" that doesn't exist
+        # Like searching for a specific chest in an empty room
+        ({}, ("a",), "a"),
         
-        # Create a client instance with the test organization name
-        client = GithubOrgClient(org_name)
+        # Test case 2: Wrong treasure type - trying to open a gold coin as a chest
+        # Like trying to use a gold coin (value 1) as another treasure map
+        ({"a": 1}, ("a", "b"), "b"),
+    ])
+    def test_access_nested_map_exception(self, nested_map, path, expected_key):
+        """Test that access_nested_map raises KeyError with correct message.
         
-        # Access the org property (this should trigger the get_json call)
-        result = client.org
+        This tests our "safety mechanisms" - making sure the function
+        fails properly and tells us exactly what went wrong.
         
-        # Verify that get_json was called exactly once with the correct URL
-        expected_url = f"https://api.github.com/orgs/{org_name}"
-        mock_get_json.assert_called_once_with(expected_url)
+        Parameters:
+        -----------
+        nested_map: dict
+            Our treasure map (the nested dictionary)
+        path: tuple  
+            The path to follow that should cause an error
+        expected_key: str
+            The key that should be mentioned in the error message
+        """
+        # Test that KeyError is raised and check the error message
+        with self.assertRaises(KeyError) as context:
+            access_nested_map(nested_map, path)
+        self.assertEqual(str(context.exception), f"'{expected_key}'")
+
+
+class TestGetJson(unittest.TestCase):
+    """Test the get_json function.
+    
+    This class tests our HTTP client function while avoiding actual
+    network requests by using mocks - like testing a car engine
+    on a test bench instead of on real roads.
+    """
+    
+    @parameterized.expand([
+        # Test case 1: Example.com with True payload
+        ("http://example.com", {"payload": True}),
         
-        # Verify that the org property returns the expected data
-        self.assertEqual(result, test_org_data)
+        # Test case 2: Holberton.io with False payload  
+        ("http://holberton.io", {"payload": False}),
+    ])
+    @patch('utils.requests.get')
+    def test_get_json(self, test_url, test_payload, mock_get):
+        """Test that get_json returns expected result without making real HTTP calls.
+        
+        This test uses mocking to replace the real requests.get with a fake version
+        that returns exactly what we want, allowing us to test our function's logic
+        without depending on external services.
+        
+        Parameters:
+        -----------
+        test_url: str
+            The URL that will be passed to get_json
+        test_payload: dict
+            The JSON data we expect to receive back
+        mock_get: Mock
+            The mocked requests.get function (injected by @patch)
+        """
+        # Configure the mock to return our test data
+        # This sets up: mock_get().json() returns test_payload
+        mock_get.return_value.json.return_value = test_payload
+        
+        # Call the function we're testing
+        result = get_json(test_url)
+        
+        # Verify the mock was called exactly once with the correct URL
+        mock_get.assert_called_once_with(test_url)
+        
+        # Verify the function returns the expected result
+        self.assertEqual(result, test_payload)
+
+
+class TestMemoize(unittest.TestCase):
+    """Test the memoize decorator.
+    
+    This class tests our caching decorator to ensure it properly caches
+    method results and avoids redundant computations - like testing
+    that a smart cache remembers answers correctly.
+    """
+    
+    def test_memoize(self):
+        """Test that memoize decorator caches method results correctly.
+        
+        This test verifies that:
+        1. The memoized property returns the correct value
+        2. The underlying method is called only once (caching works)
+        3. Multiple accesses to the property return the same cached result
+        """
+        
+        class TestClass:
+            """A test class to demonstrate memoization behavior."""
+            
+            def a_method(self):
+                """A method that returns a value - we'll mock this."""
+                return 42
+            
+            @memoize 
+            def a_property(self):
+                """A memoized property that calls a_method."""
+                return self.a_method()
+        
+        # Create an instance of our test class
+        test_obj = TestClass()
+        
+        # Mock the underlying method to track how many times it's called
+        with patch.object(test_obj, 'a_method', return_value=42) as mock_method:
+            # First access to the memoized property
+            result1 = test_obj.a_property
+            
+            # Second access to the memoized property  
+            result2 = test_obj.a_property
+            
+            # Verify both accesses return the correct result
+            self.assertEqual(result1, 42)
+            self.assertEqual(result2, 42)
+            
+            # Verify the underlying method was called only once (memoization working)
+            mock_method.assert_called_once()
+
+
+if __name__ == '__main__':
+    # This runs our tests when we execute the file directly
+    unittest.main()
 
 
 if __name__ == '__main__':
