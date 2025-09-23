@@ -35,7 +35,73 @@ class TestIntegrationGithubOrgClient(unittest.TestCase):
         - Repository URL returns repository list
         """
         # Start the patcher for requests.get
-        cls.get_patcher#!/usr/bin/env python3
+        cls.get_patcher = patch('requests.get')
+        cls.mock_get = cls.get_patcher.start()
+        
+        # Configure side_effect to return different responses for different URLs
+        def side_effect(url):
+            """Return appropriate fixture data based on URL."""
+            mock_response = Mock()
+            
+            # Organization URL - return org_payload
+            if url == "https://api.github.com/orgs/google":
+                mock_response.json.return_value = cls.org_payload
+            # Repository URL - return repos_payload  
+            elif url == cls.org_payload["repos_url"]:
+                mock_response.json.return_value = cls.repos_payload
+            
+            return mock_response
+        
+        cls.mock_get.side_effect = side_effect
+
+    @classmethod
+    def tearDownClass(cls):
+        """Clean up class-level mocks after all tests complete.
+        
+        This method runs once after all test methods in the class.
+        It stops the patcher and restores the original requests.get function.
+        """
+        cls.get_patcher.stop()
+
+    def test_public_repos(self):
+        """Test public_repos method returns expected repository list.
+        
+        This integration test verifies the complete workflow:
+        1. GithubOrgClient fetches organization data (mocked)
+        2. Extracts repos_url from organization data (real)
+        3. Fetches repository list using repos_url (mocked)
+        4. Extracts repository names from the list (real)
+        
+        All internal method interactions are real - only HTTP requests are mocked.
+        """
+        # Create client and call public_repos method
+        client = GithubOrgClient("google")
+        result = client.public_repos()
+        
+        # Verify the result matches expected repository names from fixtures
+        self.assertEqual(result, self.expected_repos)
+
+    def test_public_repos_with_license(self):
+        """Test public_repos method with license filtering.
+        
+        This test verifies that license filtering works correctly:
+        1. Calls public_repos with license="apache-2.0"  
+        2. Method should filter repositories to only include Apache 2.0 licensed ones
+        3. Result should match apache2_repos from fixtures
+        
+        Tests integration between public_repos and has_license methods.
+        """
+        # Create client and call public_repos with license filter
+        client = GithubOrgClient("google")
+        result = client.public_repos(license="apache-2.0")
+        
+        # Verify the result matches expected Apache 2.0 licensed repos from fixtures
+        self.assertEqual(result, self.apache2_repos)
+
+
+if __name__ == '__main__':
+    # This runs our tests when we execute the file directly
+    unittest.main()#!/usr/bin/env python3
 """Unit tests for client module.
 
 This module tests the GithubOrgClient class to ensure it properly
