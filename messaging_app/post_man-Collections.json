@@ -1,0 +1,217 @@
+{
+	"info": {
+		"_postman_id": "855a03d3-b36b-4ddb-9148-bcd53de7adc6",
+		"name": "Messaging API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "48876453",
+		"_collection_link": "https://jameseghievha-8386986.postman.co/workspace/8cbdb442-b750-4ce4-86cc-e426961514d8/collection/48876453-855a03d3-b36b-4ddb-9148-bcd53de7adc6?action=share&source=collection_link&creator=48876453"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login (Get Token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    pm.environment.set(\"token\", pm.response.json().access);",
+									"}",
+									"pm.test(\"Authentication successful\", function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.response.to.have.jsonBody('access');",
+									"    pm.response.to.have.jsonBody('refresh');",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"email\":\"jameseghievha@gmail.com\",\"password\":\"\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://127.0.0.1:8000/api/token/",
+							"protocol": "http",
+							"host": [
+								"127",
+								"0",
+								"0",
+								"1"
+							],
+							"port": "8000",
+							"path": [
+								"api",
+								"token",
+								""
+							]
+						},
+						"description": "Generated from cURL: curl --location --request POST '{{base_url}}/api/token/' --header 'Content-Type: application/json' --data '{\"email\":\"your@email.com\",\"password\":\"yourpassword\"}'"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Conversations",
+			"item": [
+				{
+					"name": "Create Conversation",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"participants\": [\"user_id_1\", \"user_id_2\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/conversations/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"conversations",
+								""
+							]
+						},
+						"description": "Generated from cURL: curl -X POST \"{{base_url}}/api/conversations/\" -H \"Authorization: Bearer {{token}}\" -H \"Content-Type: application/json\" -d '{\n    \"participants\": [\"user_id_1\", \"user_id_2\"]\n}'"
+					},
+					"response": []
+				},
+				{
+					"name": "List Conversations",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/conversations/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"conversations",
+								""
+							]
+						},
+						"description": "Generated from cURL: curl -X GET \"{{base_url}}/api/conversations/\" -H \"Authorization: Bearer {{token}}\""
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Messages",
+			"item": [
+				{
+					"name": "Send Message",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"conversation\": \"conversation_id\", \"message_body\": \"Hello, this is a test message!\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/messages/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"messages",
+								""
+							]
+						},
+						"description": "Generated from cURL: curl -X POST '{{base_url}}/api/messages/' -H 'Authorization: Bearer {{token}}' -H 'Content-Type: application/json' -d '{\"conversation\": \"conversation_id\", \"message_body\": \"Hello, this is a test message!\"}'"
+					},
+					"response": []
+				},
+				{
+					"name": "List Messages in Conversation",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/messages/?conversation=conversation_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"messages",
+								""
+							],
+							"query": [
+								{
+									"key": "conversation",
+									"value": "conversation_id"
+								}
+							]
+						},
+						"description": "Generated from cURL: curl -X GET '{{base_url}}/api/messages/?conversation=conversation_id' -H 'Authorization: Bearer {{token}}'"
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

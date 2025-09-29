@@ -1,12 +1,18 @@
 # messaging_app/chats/views.py
+# UPDATED VERSION WITH JWT AUTHENTICATION AND CUSTOM PERMISSIONS
 
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from django.db.models import Q, Prefetch
 from django.contrib.auth import get_user_model
+from django.db.models import Q, Prefetch
+from django.utils import timezone
+from rest_framework import viewsets, status
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.authentication import SessionAuthentication
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+import logging
 
 from .models import Conversation, Message
 from .serializers import (
@@ -15,43 +21,54 @@ from .serializers import (
     MessageSerializer,
     MessageCreateSerializer,
     UserSerializer,
-    UserSummarySerializer  # Add this import
+    UserSummarySerializer,
+    UserRegistrationSerializer,
+    LogoutSerializer
 )
+from .permissions import (
+    IsConversationParticipant,
+    IsMessageOwner,
+    MessagePermission,
+    ConversationPermission,
+    CanSendMessagePermission,
+    get_user_accessible_conversations,
+    get_user_accessible_messages
+)
+from .filters import MessageFilter, ConversationFilter
+from .pagination import CustomPageNumberPagination
 
 User = get_user_model()
-
-from django.shortcuts import redirect
-from django.contrib.auth.decorators import login_required
-
-@login_required
-def profile_redirect(request):
-    """Redirect authenticated users to API root"""
-    return redirect('/api/')
-
+logger = logging.getLogger('chats.auth')
 
 class ConversationViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for handling Conversation operations
+    ViewSet for handling Conversation operations with JWT authentication
     
     Provides:
-    - List conversations for authenticated user
-    - Retrieve specific conversation with messages
+    - List conversations for authenticated user only
+    - Retrieve specific conversation with messages (if participant)
     - Create new conversations
-    - Update conversation participants
-    - Delete conversations
+    - Update conversation participants (if participant)
+    - Delete conversations (if participant)
     - Custom actions for adding/removing participants
     """
-    permission_classes = [IsAuthenticated]
-    
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated, ConversationPermission]
+    serializer_class = ConversationSerializer
+    pagination_class = CustomPageNumberPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ConversationFilter
+    search_fields = ['participants__email', 'participants__first_name']
+    ordering_fields = ['created_at']
+    ordering = ['-created_at']
+
     def get_queryset(self):
         """
         Filter conversations to only include those where the user is a participant
         Optimize queries with prefetch_related for better performance
         """
         user = self.request.user
-        return Conversation.objects.filter(
-            participants=user
-        ).prefetch_related(
+        return get_user_accessible_conversations(user).prefetch_related(
             'participants',
             Prefetch(
                 'messages', 
@@ -72,27 +89,19 @@ class ConversationViewSet(viewsets.ModelViewSet):
         Create a new conversation
         Automatically add the requesting user as a participant
         """
+        logger.info(f"User {request.user.email} creating new conversation")
+        
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Get participant IDs from request data
-        participant_ids = request.data.get('participant_ids', [])
+        # Create conversation with current user as participant
+        conversation = serializer.save()
         
-        # Add current user to participants if not already included
-        current_user_id = str(request.user.user_id)
-        if current_user_id not in participant_ids:
-            participant_ids.append(current_user_id)
-        
-        # Create conversation
-        conversation = Conversation.objects.create()
-        
-        # Add participants
-        participants = User.objects.filter(user_id__in=participant_ids)
-        conversation.participants.set(participants)
+        logger.info(f"Conversation {conversation.conversation_id} created by {request.user.email}")
         
         # Return serialized conversation
-        serializer = self.get_serializer(conversation)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        response_serializer = self.get_serializer(conversation)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
     
     def retrieve(self, request, *args, **kwargs):
         """
@@ -100,12 +109,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         """
         conversation = self.get_object()
         
-        # Ensure user is a participant in this conversation
-        if not conversation.participants.filter(user_id=request.user.user_id).exists():
-            return Response(
-                {'error': 'You are not a participant in this conversation'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        logger.info(f"User {request.user.email} accessing conversation {conversation.conversation_id}")
         
         serializer = self.get_serializer(conversation)
         return Response(serializer.data)
@@ -126,7 +130,20 @@ class ConversationViewSet(viewsets.ModelViewSet):
         
         try:
             user_to_add = User.objects.get(user_id=user_id)
+            
+            # Check if user is already a participant
+            if conversation.participants.filter(user_id=user_id).exists():
+                return Response(
+                    {'message': f'User {user_to_add.full_name} is already a participant'},
+                    status=status.HTTP_200_OK
+                )
+            
             conversation.participants.add(user_to_add)
+            
+            logger.info(
+                f"User {request.user.email} added {user_to_add.email} "
+                f"to conversation {conversation.conversation_id}"
+            )
             
             return Response(
                 {'message': f'User {user_to_add.full_name} added to conversation'},
@@ -162,7 +179,19 @@ class ConversationViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Check if user is actually a participant
+            if not conversation.participants.filter(user_id=user_id).exists():
+                return Response(
+                    {'message': f'User {user_to_remove.full_name} is not a participant'},
+                    status=status.HTTP_200_OK
+                )
+            
             conversation.participants.remove(user_to_remove)
+            
+            logger.info(
+                f"User {request.user.email} removed {user_to_remove.email} "
+                f"from conversation {conversation.conversation_id}"
+            )
             
             return Response(
                 {'message': f'User {user_to_remove.full_name} removed from conversation'},
@@ -192,32 +221,42 @@ class ConversationViewSet(viewsets.ModelViewSet):
             Q(participants__email__icontains=query)
         ).distinct()
         
-        serializer = ConversationSummarySerializer(conversations, many=True)
+        logger.info(f"User {request.user.email} searched conversations with query: {query}")
+        
+        serializer = ConversationSummarySerializer(conversations, many=True, context={'request': request})
         return Response(serializer.data)
 
 
 class MessageViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for handling Message operations
+    ViewSet for handling Message operations with JWT authentication
     
     Provides:
-    - List messages in a conversation
-    - Retrieve specific message
-    - Create new messages
-    - Update messages (edit functionality)
-    - Delete messages
+    - List messages in conversations user participates in
+    - Retrieve specific message (if in accessible conversation)
+    - Create new messages (if participant in conversation)
+    - Update messages (if message owner)
+    - Delete messages (if message owner or admin)
     - Filter messages by conversation
     """
-    permission_classes = [IsAuthenticated]
-    
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
+    permission_classes = [IsAuthenticated, MessagePermission]
+    serializer_class = MessageSerializer
+    pagination_class = CustomPageNumberPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = MessageFilter
+    search_fields = ['message_body']
+    ordering_fields = ['sent_at']
+    ordering = ['-sent_at']
+
     def get_queryset(self):
         """
         Filter messages to only include those in conversations where user is participant
         """
         user = self.request.user
-        return Message.objects.filter(
-            conversation__participants=user
-        ).select_related('sender', 'conversation').order_by('-sent_at')
+        return get_user_accessible_messages(user).select_related(
+            'sender', 'conversation'
+        ).order_by('-sent_at')
     
     def get_serializer_class(self):
         """
@@ -227,58 +266,11 @@ class MessageViewSet(viewsets.ModelViewSet):
             return MessageCreateSerializer
         return MessageSerializer
     
-    def create(self, request, *args, **kwargs):
+    def perform_create(self, serializer):
         """
-        Create a new message in a conversation
-        Automatically set the sender to the requesting user
+        Set the sender of the message to the requesting user
         """
-        serializer = MessageCreateSerializer(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        
-        # Verify user is participant in the conversation
-        conversation = serializer.validated_data['conversation']
-        if not conversation.participants.filter(user_id=request.user.user_id).exists():
-            return Response(
-                {'error': 'You are not a participant in this conversation'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Create the message
-        message = serializer.save()
-        
-        # Return full message details
-        response_serializer = MessageSerializer(message)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-    
-    def update(self, request, *args, **kwargs):
-        """
-        Update a message (only allow sender to edit their own messages)
-        """
-        message = self.get_object()
-        
-        # Only allow sender to edit their message
-        if message.sender.user_id != request.user.user_id:
-            return Response(
-                {'error': 'You can only edit your own messages'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        return super().update(request, *args, **kwargs)
-    
-    def destroy(self, request, *args, **kwargs):
-        """
-        Delete a message (only allow sender to delete their own messages)
-        """
-        message = self.get_object()
-        
-        # Only allow sender to delete their message
-        if message.sender.user_id != request.user.user_id:
-            return Response(
-                {'error': 'You can only delete your own messages'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        return super().destroy(request, *args, **kwargs)
+        serializer.save(sender=self.request.user)
     
     @action(detail=False, methods=['get'])
     def by_conversation(self, request):
@@ -288,29 +280,19 @@ class MessageViewSet(viewsets.ModelViewSet):
         conversation_id = request.query_params.get('conversation_id')
         if not conversation_id:
             return Response(
-                {'error': 'conversation_id parameter is required'},
+                {'error': 'conversation_id is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        try:
-            conversation = Conversation.objects.get(conversation_id=conversation_id)
-            
-            # Verify user is participant
-            if not conversation.participants.filter(user_id=request.user.user_id).exists():
-                return Response(
-                    {'error': 'You are not a participant in this conversation'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            messages = self.get_queryset().filter(conversation=conversation)
-            serializer = MessageSerializer(messages, many=True)
-            return Response(serializer.data)
-            
-        except Conversation.DoesNotExist:
-            return Response(
-                {'error': 'Conversation not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        messages = self.get_queryset().filter(conversation__conversation_id=conversation_id)
+        page = self.paginate_queryset(messages)
+        
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(messages, many=True)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
     def search(self, request):
@@ -332,22 +314,117 @@ class MessageViewSet(viewsets.ModelViewSet):
         if conversation_id:
             messages = messages.filter(conversation__conversation_id=conversation_id)
         
-        serializer = MessageSerializer(messages, many=True)
+        logger.info(f"User {request.user.email} searched messages with query: {query}")
+        
+        serializer = MessageSerializer(messages, many=True, context={'request': request})
         return Response(serializer.data)
 
 
-class UserViewSet(viewsets.ReadOnlyModelViewSet):
+class UserViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for User operations (read-only for messaging context)
+    ViewSet for User operations with JWT authentication
     
     Provides:
     - List users (for finding conversation participants)
     - Retrieve user details
+    - Create new users (registration)
+    - Update user profile
     - Search users by name or email
     """
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
+    authentication_classes = [JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        Return users based on user role
+        - Admins can see all users
+        - Regular users can see limited user info for search purposes
+        """
+        user = self.request.user
+        if user.role == 'admin':
+            return User.objects.all()
+        else:
+            # Regular users can only see basic info of other users for messaging
+            return User.objects.filter(is_active=True).only(
+                'user_id', 'first_name', 'last_name', 'email', 'role'
+            )
+    
+    def get_permissions(self):
+        """
+        Set permissions based on action
+        """
+        if self.action == 'create':
+            permission_classes = [AllowAny]  # Allow registration without auth
+        elif self.action in ['update', 'partial_update', 'destroy']:
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = [IsAuthenticated]
+        
+        return [permission() for permission in permission_classes]
+    
+    def get_serializer_class(self):
+        """
+        Return appropriate serializer based on action
+        """
+        if self.action == 'create':
+            return UserRegistrationSerializer
+        elif self.action in ['list', 'search']:
+            return UserSummarySerializer
+        return UserSerializer
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new user (registration)
+        """
+        serializer = UserRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        user = serializer.save()
+        
+        logger.info(f"New user registered: {user.email}")
+        
+        return Response(
+            {
+                'message': 'User registered successfully',
+                'user': UserSummarySerializer(user).data,
+                'tokens': serializer.get_tokens(user)
+            },
+            status=status.HTTP_201_CREATED
+        )
+    
+    def update(self, request, *args, **kwargs):
+        """
+        Update user profile - users can only update their own profile
+        """
+        user_to_update = self.get_object()
+        
+        # Check if user is updating their own profile or if admin
+        if user_to_update.user_id != request.user.user_id and request.user.role != 'admin':
+            return Response(
+                {'error': 'You can only update your own profile'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        logger.info(f"User {request.user.email} updating profile for {user_to_update.email}")
+        
+        return super().update(request, *args, **kwargs)
+    
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete user - only admins or the user themselves
+        """
+        user_to_delete = self.get_object()
+        
+        # Check permissions
+        if user_to_delete.user_id != request.user.user_id and request.user.role != 'admin':
+            return Response(
+                {'error': 'You can only delete your own account'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        logger.warning(f"User {request.user.email} deleting account for {user_to_delete.email}")
+        
+        return super().destroy(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
     def search(self, request):
@@ -361,13 +438,15 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        users = User.objects.filter(
+        users = self.get_queryset().filter(
             Q(first_name__icontains=query) |
             Q(last_name__icontains=query) |
             Q(email__icontains=query)
         ).exclude(user_id=request.user.user_id)  # Exclude current user
         
-        serializer = UserSerializer(users, many=True)
+        logger.info(f"User {request.user.email} searched for users with query: {query}")
+        
+        serializer = UserSummarySerializer(users, many=True)
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
@@ -377,3 +456,117 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         """
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
+    
+    @action(detail=False, methods=['patch'])
+    def change_password(self, request):
+        """
+        Change current user's password
+        """
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        
+        if not old_password or not new_password:
+            return Response(
+                {'error': 'Both old_password and new_password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user = request.user
+        
+        if not user.check_password(old_password):
+            return Response(
+                {'error': 'Invalid old password'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate new password
+        try:
+            from django.contrib.auth.password_validation import validate_password
+            validate_password(new_password, user)
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user.set_password(new_password)
+        user.save()
+        
+        logger.info(f"User {user.email} changed their password")
+        
+        return Response({'message': 'Password changed successfully'})
+
+
+# Additional utility views for JWT authentication
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """
+    Custom token obtain view with enhanced logging
+    """
+    
+    def post(self, request, *args, **kwargs):
+        logger.info(f"Login attempt from IP: {request.META.get('REMOTE_ADDR', 'unknown')}")
+        
+        response = super().post(request, *args, **kwargs)
+        
+        if response.status_code == 200:
+            # Extract email from request data for logging
+            email = request.data.get('username', 'unknown')  # username field contains email
+            logger.info(f"Successful JWT login for user: {email}")
+        else:
+            logger.warning(f"Failed JWT login attempt from IP: {request.META.get('REMOTE_ADDR', 'unknown')}")
+        
+        return response
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def auth_test(request):
+    """
+    Simple endpoint to test JWT authentication
+    """
+    return Response({
+        'message': 'JWT Authentication working!',
+        'user': {
+            'user_id': str(request.user.user_id),
+            'email': request.user.email,
+            'role': request.user.role,
+            'full_name': request.user.full_name,
+        },
+        'auth_method': request.auth.__class__.__name__ if request.auth else 'Unknown'
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_view(request):
+    """
+    Logout view that blacklists the refresh token
+    """
+    from .serializers import LogoutSerializer
+    
+    serializer = LogoutSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    
+    logger.info(f"User {request.user.email} logged out")
+    
+    return Response({'message': 'Successfully logged out'})
+
+
+# Health check endpoint
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health_check(request):
+    """
+    Health check endpoint for monitoring
+    """
+    return Response({
+        'status': 'healthy',
+        'message': 'Messaging API is running',
+        'timestamp': '2024-01-01T00:00:00Z'  # You can use timezone.now() here
+    })
